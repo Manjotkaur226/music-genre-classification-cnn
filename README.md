@@ -60,12 +60,14 @@ Added Dropout layers to reduce overfitting.
 Tuned learning rate, batch size, and number of epochs.
 Experimented with different CNN architectures and filter sizes.
 
-10. Team Member Roles & Contributions
-Amita – Dataset selection, data cleaning, cloud development
-Anju bala – Exploratory data analysis (EDA), feature engineering
-Manjot Kaur – Model selection, hyperparameter tuning
-Krishna Mohandas – Pickle file creation, Streamlit web app
-Everyone – GitHub repository setup and management
+## Team Member Roles & Contributions
+
+- **Amita** – Dataset selection, data cleaning, cloud development  
+- **Anju Bala** – Exploratory data analysis (EDA), feature engineering  
+- **Manjot Kaur** – Model selection, hyperparameter tuning  
+- **Krishna Mohandas** – Pickle file creation, Streamlit web app  
+- **Everyone** – GitHub repository setup and management
+
 
 11. Future Enhancements
 Implement CRNN (Convolutional Recurrent Neural Networks)
