@@ -27,13 +27,13 @@ source venv/bin/activate   # On Windows: venv\Scripts\activate
 
 pip install -r requirements.txt
 
-4 Place your dataset folder as described in the instructions (or download it from [dataset source link]).
+4 Place your dataset folder as described in the instructions (or download it from https://www.kaggle.com/datasets/andradaolteanu/gtzan-dataset-music-genre-classification  ).
 
 5 Run the training scripts or load pre-trained models:
 
 python train_cnn.py
 python train_traditional_models.py
-
+ 
 6 Run the Streamlit app for interactive prediction:
 
 streamlit run streamlit_app.py
