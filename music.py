@@ -7,9 +7,12 @@
 # • Single-image "Compare All": winner badge, highlighted row, colored bar chart with labels, top-3 per model
 # • Batch "Compare All": unified table + single bar chart of average confidence per model across files
 # • CSV downloads, spinners, graceful errors, SVM probability fallback
+# • NEW: Models auto-download once from GitHub Releases (cached)
 
 # ----------------- Imports -----------------
+import os
 import json
+import urllib.request
 import pickle
 import numpy as np
 import pandas as pd
@@ -19,10 +22,6 @@ from PIL import Image
 from tensorflow.keras.models import load_model
 from skimage.color import rgb2gray
 from skimage.feature import hog
-
-# New: robust model download
-from pathlib import Path
-import requests
 
 # ----------------- Page setup -----------------
 st.set_page_config(
@@ -126,90 +125,38 @@ def metrics_table():
     df = pd.DataFrame(rows)
     return df[["Model", "Accuracy", "F1", "Precision", "Recall"]]
 
-# ----------------- Model URLs & robust download -----------------
-MODEL_DIR = Path("models")
-MODEL_DIR.mkdir(exist_ok=True)
+# ----------------- Model download URLs (from your Release) -----------------
+CNN_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/best_cnn_model.h5"
+LR_URL  = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/logistic_regression_model.pkl"
+SVM_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/svm_model.pkl"
 
-# Asset names (must match your release assets exactly)
-CNN_ASSET = "best_cnn_model.h5"
-LR_ASSET  = "logistic_regression_model.pkl"
-SVM_ASSET = "svm_model.pkl"
+CNN_PATH = "best_cnn_model.h5"
+LR_PATH  = "logistic_regression_model.pkl"
+SVM_PATH = "svm_model.pkl"
 
-# Primary (tagged) URLs — update if your tag/filenames change
-CNN_MODEL_URL_PRIMARY = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1-models/best_cnn_model.h5"
-LR_MODEL_URL_PRIMARY  = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1-models/logistic_regression_model.pkl"
-SVM_MODEL_URL_PRIMARY = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1-models/svm_model.pkl"
+def _ensure_file(local_path: str, url: str, label: str):
+    """Download file if missing."""
+    if os.path.exists(local_path):
+        return
+    if not url:
+        raise FileNotFoundError(f"{label} not found and no URL provided.")
+    with st.spinner(f"Downloading {label} …"):
+        urllib.request.urlretrieve(url, local_path)
 
-# Fallback: latest release direct asset links (no tag hardcoding)
-CNN_MODEL_URL_FALLBACK = f"https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/latest/download/{CNN_ASSET}"
-LR_MODEL_URL_FALLBACK  = f"https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/latest/download/{LR_ASSET}"
-SVM_MODEL_URL_FALLBACK = f"https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/latest/download/{SVM_ASSET}"
-
-def _try_download(url: str, dest: Path, headers: dict, token: str | None):
-    # Add token if provided (helps with private repos / rate limits)
-    req_headers = headers.copy()
-    if token:
-        req_headers["Authorization"] = f"token {token}"
-
-    resp = requests.get(url, stream=True, headers=req_headers, timeout=180)
-    # Surface status to the UI for debugging (Streamlit usually redacts)
-    st.write(f"Attempting download: {url} — status {resp.status_code}")
-    resp.raise_for_status()
-
-    with open(dest, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                f.write(chunk)
-
-def _download_if_missing(primary_url: str, fallback_url: str, dest: Path) -> Path:
-    if dest.exists() and dest.stat().st_size > 0:
-        return dest
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/114.0 Safari/537.36",
-        "Accept": "*/*",
-        "Connection": "keep-alive",
-    }
-    # Optional: set a GitHub token in Streamlit Cloud → Settings → Secrets
-    token = None
-    try:
-        token = st.secrets.get("GITHUB_TOKEN", None)
-    except Exception:
-        pass
-
-    last_err = None
-    for idx, url in enumerate([primary_url, fallback_url], start=1):
-        try:
-            with st.spinner(f"Downloading {dest.name} (try {idx}/2)…"):
-                _try_download(url, dest, headers, token)
-            return dest
-        except requests.HTTPError as e:
-            last_err = f"HTTPError {e.response.status_code} for {url}"
-        except Exception as e:
-            last_err = f"{type(e).__name__}: {e}"
-
-    raise RuntimeError(
-        f"Failed to fetch {dest.name}. Last error: {last_err}. "
-        f"Check that the release/asset exists, is public, and names match."
-    )
-
-# ----------------- Load models -----------------
+# ----------------- Load models (download-once + cache) -----------------
 @st.cache_resource(show_spinner=False)
 def load_models():
-    cnn_path = _download_if_missing(CNN_MODEL_URL_PRIMARY, CNN_MODEL_URL_FALLBACK, MODEL_DIR / CNN_ASSET)
-    lr_path  = _download_if_missing(LR_MODEL_URL_PRIMARY,  LR_MODEL_URL_FALLBACK,  MODEL_DIR / LR_ASSET)
-    svm_path = _download_if_missing(SVM_MODEL_URL_PRIMARY, SVM_MODEL_URL_FALLBACK, MODEL_DIR / SVM_ASSET)
+    # Ensure files exist locally (download if needed)
+    _ensure_file(CNN_PATH, CNN_URL, "CNN model (.h5)")
+    _ensure_file(LR_PATH,  LR_URL,  "Logistic Regression model (.pkl)")
+    _ensure_file(SVM_PATH, SVM_URL, "SVM model (.pkl)")
 
-    # Keras CNN
-    cnn_model = load_model(str(cnn_path))
-
-    # Traditional models
-    with open(lr_path, "rb") as f:
+    # Load them
+    cnn_model = load_model(CNN_PATH)
+    with open(LR_PATH, "rb") as f:
         lr_model = pickle.load(f)
-    with open(svm_path, "rb") as f:
+    with open(SVM_PATH, "rb") as f:
         svm_model = pickle.load(f)
-
     return cnn_model, lr_model, svm_model
 
 cnn_model, lr_model, svm_model = load_models()
@@ -232,7 +179,7 @@ def safe_predict_proba(model, X):
     if scores.ndim == 1:
         scores = np.vstack([scores, -scores]).T
     e = np.exp(scores - np.max(scores, axis=1, keepdims=True))
-    return e / e.sum(axis=1, keep_dims=True)
+    return e / e.sum(axis=1, keepdims=True)
 
 def topk(probs, k=3):
     idx = np.argsort(probs[0])[::-1][:k]
@@ -330,7 +277,7 @@ with tab_pred:
                     for i, c in topk(p, k=3):
                         st.write(f"- {GENRE_LABELS[i]} — {c:.2%}")
 
-                else:  # Compare All Models (single)
+                else:  # Compare All Models (single) — winner badge, highlight, colored chart, top-3
                     rows = []
 
                     # CNN
@@ -526,6 +473,7 @@ with tab_pred:
 
         except Exception as e:
             st.error(f"Batch comparison failed: {e}")
+
 
 
 
