@@ -20,6 +20,10 @@ from tensorflow.keras.models import load_model
 from skimage.color import rgb2gray
 from skimage.feature import hog
 
+# NEW: robust model fetch
+from pathlib import Path
+import requests
+
 # ----------------- Page setup -----------------
 st.set_page_config(
     page_title="Music Genre Classification",
@@ -122,14 +126,43 @@ def metrics_table():
     df = pd.DataFrame(rows)
     return df[["Model", "Accuracy", "F1", "Precision", "Recall"]]
 
+# ----------------- Model URLs & download helpers (NEW) -----------------
+MODEL_DIR = Path("models")
+MODEL_DIR.mkdir(exist_ok=True)
+
+CNN_MODEL_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1-models/best_cnn_model.h5"
+LR_MODEL_URL  = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1-models/logistic_regression_model.pkl"
+SVM_MODEL_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1-models/svm_model.pkl"
+
+def _download_if_missing(url: str, dest: Path):
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+    with st.spinner(f"Downloading model: {dest.name}"):
+        r = requests.get(url, stream=True, timeout=120)
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+    return dest
+
 # ----------------- Load models -----------------
 @st.cache_resource(show_spinner=False)
 def load_models():
-    cnn_model = load_model("best_cnn_model.h5")
-    with open("logistic_regression_model.pkl", "rb") as f:
+    # ensure files exist (download once, then cached)
+    cnn_path = _download_if_missing(CNN_MODEL_URL, MODEL_DIR / "best_cnn_model.h5")
+    lr_path  = _download_if_missing(LR_MODEL_URL,  MODEL_DIR / "logistic_regression_model.pkl")
+    svm_path = _download_if_missing(SVM_MODEL_URL, MODEL_DIR / "svm_model.pkl")
+
+    # Keras CNN
+    cnn_model = load_model(str(cnn_path))
+
+    # Traditional models
+    with open(lr_path, "rb") as f:
         lr_model = pickle.load(f)
-    with open("svm_model.pkl", "rb") as f:
+    with open(svm_path, "rb") as f:
         svm_model = pickle.load(f)
+
     return cnn_model, lr_model, svm_model
 
 cnn_model, lr_model, svm_model = load_models()
@@ -250,7 +283,7 @@ with tab_pred:
                     for i, c in topk(p, k=3):
                         st.write(f"- {GENRE_LABELS[i]} — {c:.2%}")
 
-                else:  # Compare All Models (single) — winner badge, highlight, colored chart, top-3
+                else:  # Compare All Models (single)
                     rows = []
 
                     # CNN
