@@ -284,14 +284,15 @@ with tab_pred:
     st.subheader("Single Image")
     uploaded_file = st.file_uploader("Upload a spectrogram image", type=["jpg", "jpeg", "png"], key="single")
    # Build model list dynamically (hide CNN if unavailable)
-model_options = []
-if cnn_model is not None:
-    model_options.append("CNN")
+    model_options = []
+    if cnn_model is not None:
+       model_options.append("CNN")
 model_options += ["Logistic Regression", "SVM", "Compare All Models"]
+
 model_choice = st.selectbox("Select Model", model_options)
 
-    if uploaded_file and uploaded_file.size > 5_000_000:
-        st.warning("Large image (>5MB). Resizing may be slow.")
+if uploaded_file and uploaded_file.size > 5_000_000:
+    st.warning("Large image (>5MB). Resizing may be slow.")
 
     if uploaded_file and st.button("Predict"):
         try:
