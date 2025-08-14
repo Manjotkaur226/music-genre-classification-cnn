@@ -144,22 +144,69 @@ def _ensure_file(local_path: str, url: str, label: str):
         urllib.request.urlretrieve(url, local_path)
 
 # ----------------- Load models (download-once + cache) -----------------
-@st.cache_resource(show_spinner=False)
-def load_models():
-    # Ensure files exist locally (download if needed)
-    _ensure_file(CNN_PATH, CNN_URL, "CNN model (.h5)")
-    _ensure_file(LR_PATH,  LR_URL,  "Logistic Regression model (.pkl)")
-    _ensure_file(SVM_PATH, SVM_URL, "SVM model (.pkl)")
+# ----------------- Model download URLs (from your Release) -----------------
+CNN_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/best_cnn_model.h5"
+LR_URL  = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/logistic_regression_model.pkl"
+SVM_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/svm_model.pkl"
 
-    # Load them
-    cnn_model = load_model(CNN_PATH)
+CNN_PATH = "best_cnn_model.h5"
+LR_PATH  = "logistic_regression_model.pkl"
+SVM_PATH = "svm_model.pkl"
+
+def _ensure_file(local_path: str, url: str, label: str):
+    """Download file if missing."""
+    if os.path.exists(local_path):
+        return
+    if not url:
+        raise FileNotFoundError(f"{label} not found and no URL provided.")
+    with st.spinner(f"Downloading {label} …"):
+        urllib.request.urlretrieve(url, local_path)
+
+@st.cache_resource(show_spinner=False)
+def load_models_lenient():
+    """
+    Download and load models. CNN is loaded with compile=False to avoid
+    cross-version optimizer/metrics deserialization issues.
+    App continues if CNN fails; LR/SVM are required.
+    """
+    # Ensure files exist
+    try:
+        _ensure_file(CNN_PATH, CNN_URL, "CNN model (.h5)")
+    except Exception as e:
+        st.sidebar.warning(f"CNN model not ready: {e}")
+
+    try:
+        _ensure_file(LR_PATH,  LR_URL,  "Logistic Regression model (.pkl)")
+        _ensure_file(SVM_PATH, SVM_URL, "SVM model (.pkl)")
+    except Exception as e:
+        st.error(f"Required classic models missing: {e}")
+        raise
+
+    # Load LR/SVM (required)
     with open(LR_PATH, "rb") as f:
         lr_model = pickle.load(f)
     with open(SVM_PATH, "rb") as f:
         svm_model = pickle.load(f)
+
+    # Load CNN (optional)
+    cnn_model = None
+    if os.path.exists(CNN_PATH):
+        try:
+            cnn_model = load_model(CNN_PATH, compile=False)  # <- key change
+        except TypeError as e:
+            st.sidebar.warning(
+                "Could not load CNN (TypeError while deserializing). "
+                "The app will still work with Logistic Regression and SVM.\n\n"
+                f"Details: {e}"
+            )
+        except Exception as e:
+            st.sidebar.warning(f"Could not load CNN: {e}")
+
     return cnn_model, lr_model, svm_model
 
-cnn_model, lr_model, svm_model = load_models()
+# Use the lenient loader:
+cnn_model, lr_model, svm_model = load_models_lenient()
+
 
 # ----------------- Helpers -----------------
 def preprocess_for_cnn(img: Image.Image):
@@ -236,7 +283,12 @@ with tab_pred:
     # -------- Single Predict --------
     st.subheader("Single Image")
     uploaded_file = st.file_uploader("Upload a spectrogram image", type=["jpg", "jpeg", "png"], key="single")
-    model_choice = st.selectbox("Select Model", ("CNN", "Logistic Regression", "SVM", "Compare All Models"))
+   # Build model list dynamically (hide CNN if unavailable)
+model_options = []
+if cnn_model is not None:
+    model_options.append("CNN")
+model_options += ["Logistic Regression", "SVM", "Compare All Models"]
+model_choice = st.selectbox("Select Model", model_options)
 
     if uploaded_file and uploaded_file.size > 5_000_000:
         st.warning("Large image (>5MB). Resizing may be slow.")
