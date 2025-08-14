@@ -19,7 +19,7 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 from PIL import Image
-from tensorflow.keras.models import load_model
+import tensorflow as tf
 from skimage.color import rgb2gray
 from skimage.feature import hog
 
@@ -192,7 +192,8 @@ def load_models_lenient():
     cnn_model = None
     if os.path.exists(CNN_PATH):
         try:
-            cnn_model = load_model(CNN_PATH, compile=False)  # <- key change
+            cnn_model = tf.keras.models.load_model('best_cnn_model.h5', compile=False)
+            
         except TypeError as e:
             st.sidebar.warning(
                 "Could not load CNN (TypeError while deserializing). "
