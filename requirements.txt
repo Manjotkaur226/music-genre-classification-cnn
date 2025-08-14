@@ -1,14 +1,13 @@
 streamlit
 tensorflow-cpu==2.15.0
-keras==2.15.0
-h5py==3.11.0
-scikit-learn==1.4.2
-numpy==1.26.4
-pandas==2.2.2
-pillow==10.4.0
-scikit-image==0.22.0
-altair==5.5.0
-
+tf-keras==2.15.0
+scikit-learn
+numpy
+pillow
+scikit-image
+pandas
+altair
+h5py>=3.8
 
 
 
