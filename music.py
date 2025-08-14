@@ -7,7 +7,7 @@
 # • Single-image "Compare All": winner badge, highlighted row, colored bar chart with labels, top-3 per model
 # • Batch "Compare All": unified table + single bar chart of average confidence per model across files
 # • CSV downloads, spinners, graceful errors, SVM probability fallback
-# • NEW: Models auto-download once from GitHub Releases (cached)
+# • Models auto-download once from GitHub (RAW); CNN .h5 loaded with a legacy-compatible loader
 
 # ----------------- Imports -----------------
 import os
@@ -30,6 +30,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 st.title("🎵 Music Genre Classification")
+
+# Show environment versions (helps debug)
+try:
+    import tf_keras  # available when you install tf-keras==2.15.0
+    st.caption(f"TF {tf.__version__} | tf-keras {tf_keras.__version__}")
+except Exception:
+    st.caption(f"TF {tf.__version__}")
+
 st.write(
     "Upload spectrograms to predict the genre using **CNN**, **Logistic Regression**, or **SVM** — "
     "and compare each model’s **validation performance** (Accuracy/F1/Precision/Recall)."
@@ -125,48 +133,58 @@ def metrics_table():
     df = pd.DataFrame(rows)
     return df[["Model", "Accuracy", "F1", "Precision", "Recall"]]
 
-# ----------------- Model download URLs (from your Release) -----------------
-CNN_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/best_cnn_model.h5"
-LR_URL  = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/logistic_regression_model.pkl"
-SVM_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/svm_model.pkl"
+# ----------------- Model download URLs (RAW GitHub, case-sensitive) -----------------
+# Use RAW URLs, not /blob/ pages. Filenames must match exactly (case-sensitive).
+CNN_URL = "https://raw.githubusercontent.com/Manjotkaur226/music-genre-classification-cnn/main/Best_CNN_Model.h5"
+LR_URL  = "https://raw.githubusercontent.com/Manjotkaur226/music-genre-classification-cnn/main/logistic_regression_model.pkl"
+SVM_URL = "https://raw.githubusercontent.com/Manjotkaur226/music-genre-classification-cnn/main/svm_model.pkl"
 
-CNN_PATH = "best_cnn_model.h5"
+CNN_PATH = "Best_CNN_Model.h5"
 LR_PATH  = "logistic_regression_model.pkl"
 SVM_PATH = "svm_model.pkl"
 
 def _ensure_file(local_path: str, url: str, label: str):
-    """Download file if missing."""
+    """Download file if missing (using urllib to avoid extra deps)."""
     if os.path.exists(local_path):
         return
     if not url:
         raise FileNotFoundError(f"{label} not found and no URL provided.")
     with st.spinner(f"Downloading {label} …"):
         urllib.request.urlretrieve(url, local_path)
+
+# ----------------- Legacy-compatible CNN loader -----------------
+def load_cnn_compat(path: str):
+    """
+    Load legacy .h5 models saved with Keras 2.x.
+    Priority:
+      1) tf-keras 2.15 (preferred)
+      2) keras 3 legacy loader (if keras 3 is present)
+      3) tf.keras (works if env truly is TF/Keras 2.15 bundled)
+    """
+    # 1) tf-keras 2.15
+    try:
+        from tf_keras.models import load_model as tfk_215_load  # requires tf-keras==2.15.0
+        return tfk_215_load(path, compile=False)
+    except Exception as e1:
+        last = f"tf-keras failed: {e1}"
+        # 2) Keras 3 legacy
+        try:
+            from keras.saving.legacy.save import load_model as k3_legacy_load  # type: ignore
+            return k3_legacy_load(path, compile=False)
+        except Exception as e2:
+            last += f" | keras3-legacy failed: {e2}"
+            # 3) tf.keras
+            try:
+                from tensorflow.keras.models import load_model as tfk_load
+                return tfk_load(path, compile=False)
+            except Exception as e3:
+                raise RuntimeError(f"Could not load CNN H5 with any loader. {last} | tf.keras failed: {e3}")
 
 # ----------------- Load models (download-once + cache) -----------------
-# ----------------- Model download URLs (from your Release) -----------------
-CNN_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/best_cnn_model.h5"
-LR_URL  = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/logistic_regression_model.pkl"
-SVM_URL = "https://github.com/Manjotkaur226/music-genre-classification-cnn/releases/download/v1.0/svm_model.pkl"
-
-CNN_PATH = "best_cnn_model.h5"
-LR_PATH  = "logistic_regression_model.pkl"
-SVM_PATH = "svm_model.pkl"
-
-def _ensure_file(local_path: str, url: str, label: str):
-    """Download file if missing."""
-    if os.path.exists(local_path):
-        return
-    if not url:
-        raise FileNotFoundError(f"{label} not found and no URL provided.")
-    with st.spinner(f"Downloading {label} …"):
-        urllib.request.urlretrieve(url, local_path)
-
 @st.cache_resource(show_spinner=False)
 def load_models_lenient():
     """
-    Download and load models. CNN is loaded with compile=False to avoid
-    cross-version optimizer/metrics deserialization issues.
+    Download and load models. CNN is loaded with a legacy-compatible loader.
     App continues if CNN fails; LR/SVM are required.
     """
     # Ensure files exist
@@ -192,22 +210,17 @@ def load_models_lenient():
     cnn_model = None
     if os.path.exists(CNN_PATH):
         try:
-            cnn_model = tf.keras.models.load_model('best_cnn_model.h5', compile=False)
-            
-        except TypeError as e:
+            cnn_model = load_cnn_compat(CNN_PATH)
+        except Exception as e:
             st.sidebar.warning(
-                "Could not load CNN (TypeError while deserializing). "
-                "The app will still work with Logistic Regression and SVM.\n\n"
+                "Could not load CNN (legacy H5). The app will still work with Logistic Regression and SVM.\n\n"
                 f"Details: {e}"
             )
-        except Exception as e:
-            st.sidebar.warning(f"Could not load CNN: {e}")
 
     return cnn_model, lr_model, svm_model
 
 # Use the lenient loader:
 cnn_model, lr_model, svm_model = load_models_lenient()
-
 
 # ----------------- Helpers -----------------
 def preprocess_for_cnn(img: Image.Image):
@@ -283,17 +296,21 @@ with tab_about:
 with tab_pred:
     # -------- Single Predict --------
     st.subheader("Single Image")
-    uploaded_file = st.file_uploader("Upload a spectrogram image", type=["jpg", "jpeg", "png"], key="single")
-   # Build model list dynamically (hide CNN if unavailable)
+    uploaded_file = st.file_uploader(
+        "Upload a spectrogram image",
+        type=["jpg", "jpeg", "png"],
+        key="single"
+    )
+
+    # Build model list dynamically (hide CNN if unavailable)
     model_options = []
     if cnn_model is not None:
-       model_options.append("CNN")
-model_options += ["Logistic Regression", "SVM", "Compare All Models"]
+        model_options.append("CNN")
+    model_options += ["Logistic Regression", "SVM", "Compare All Models"]
+    model_choice = st.selectbox("Select Model", model_options)
 
-model_choice = st.selectbox("Select Model", model_options)
-
-if uploaded_file and uploaded_file.size > 5_000_000:
-    st.warning("Large image (>5MB). Resizing may be slow.")
+    if uploaded_file and uploaded_file.size > 5_000_000:
+        st.warning("Large image (>5MB). Resizing may be slow.")
 
     if uploaded_file and st.button("Predict"):
         try:
@@ -302,14 +319,17 @@ if uploaded_file and uploaded_file.size > 5_000_000:
                 st.image(image, caption="Uploaded Image", use_container_width=True)
 
                 if model_choice == "CNN":
-                    x = preprocess_for_cnn(image)
-                    p = cnn_model.predict(x)
-                    cls = int(np.argmax(p)); conf = float(p[0][cls])
-                    st.success(f"🎯 Predicted: **{GENRE_LABELS[cls]}**")
-                    st.write(f"💡 Confidence: **{conf:.2%}**")
-                    st.caption("Top-3 predictions")
-                    for i, c in topk(p, k=3):
-                        st.write(f"- {GENRE_LABELS[i]} — {c:.2%}")
+                    if cnn_model is None:
+                        st.error("CNN model is unavailable in this environment.")
+                    else:
+                        x = preprocess_for_cnn(image)
+                        p = cnn_model.predict(x)
+                        cls = int(np.argmax(p)); conf = float(p[0][cls])
+                        st.success(f"🎯 Predicted: **{GENRE_LABELS[cls]}**")
+                        st.write(f"💡 Confidence: **{conf:.2%}**")
+                        st.caption("Top-3 predictions")
+                        for i, c in topk(p, k=3):
+                            st.write(f"- {GENRE_LABELS[i]} — {c:.2%}")
 
                 elif model_choice == "Logistic Regression":
                     x = extract_hog_features(image)
@@ -331,14 +351,15 @@ if uploaded_file and uploaded_file.size > 5_000_000:
                     for i, c in topk(p, k=3):
                         st.write(f"- {GENRE_LABELS[i]} — {c:.2%}")
 
-                else:  # Compare All Models (single) — winner badge, highlight, colored chart, top-3
+                else:  # Compare All Models (single) — winner badge, highlight, chart, top-3
                     rows = []
 
-                    # CNN
-                    x_cnn = preprocess_for_cnn(image)
-                    p_cnn = cnn_model.predict(x_cnn)
-                    cls_cnn = int(np.argmax(p_cnn)); conf_cnn = float(p_cnn[0][cls_cnn])
-                    rows.append(["CNN", GENRE_LABELS[cls_cnn], conf_cnn, MODEL_METRICS["CNN"][metric_choice.lower()]])
+                    # CNN (only if available)
+                    if cnn_model is not None:
+                        x_cnn = preprocess_for_cnn(image)
+                        p_cnn = cnn_model.predict(x_cnn)
+                        cls_cnn = int(np.argmax(p_cnn)); conf_cnn = float(p_cnn[0][cls_cnn])
+                        rows.append(["CNN", GENRE_LABELS[cls_cnn], conf_cnn, MODEL_METRICS["CNN"][metric_choice.lower()]])
 
                     # HOG once
                     x_hog = extract_hog_features(image)
@@ -407,7 +428,8 @@ if uploaded_file and uploaded_file.size > 5_000_000:
                                 Probability=lambda d: (d["Probability"]*100).round(2).astype(str) + "%"
                             ))
 
-                        _topk_table("CNN", p_cnn)
+                        if cnn_model is not None:
+                            _topk_table("CNN", p_cnn)
                         _topk_table("Logistic Regression", p_lr)
                         _topk_table("SVM", p_svm)
         except Exception as e:
@@ -428,24 +450,34 @@ if uploaded_file and uploaded_file.size > 5_000_000:
         try:
             with st.spinner(f"Running batch inference for {model_choice}…"):
                 for f in files:
+                    if f.size > 5_000_000:
+                        st.warning(f"{f.name} is large (>5MB). Skipping to keep things responsive.")
+                        continue
                     img = Image.open(f).convert("RGB")
                     if model_choice == "CNN":
+                        if cnn_model is None:
+                            st.error("CNN model is unavailable; choose another model.")
+                            break
                         p = cnn_model.predict(preprocess_for_cnn(img))
                     elif model_choice == "Logistic Regression":
                         p = safe_predict_proba(lr_model, extract_hog_features(img))
                     elif model_choice == "SVM":
                         p = safe_predict_proba(svm_model, extract_hog_features(img))
                     else:
-                        # If user picked "Compare All Models" but clicked One Model, default to CNN
+                        # If user picked "Compare All Models" but clicked One Model, default to CNN (if available)
+                        if cnn_model is None:
+                            st.error("CNN model is unavailable; pick LR or SVM.")
+                            break
                         p = cnn_model.predict(preprocess_for_cnn(img))
                     cls = int(np.argmax(p)); conf = float(p[0][cls])
                     rows.append({"File": f.name, "Predicted Genre": GENRE_LABELS[cls], "Confidence": conf})
 
-            batch_df = pd.DataFrame(rows)
-            st.dataframe(batch_df.style.format({"Confidence": "{:.2%}"}), use_container_width=True, hide_index=True)
+            if rows:
+                batch_df = pd.DataFrame(rows)
+                st.dataframe(batch_df.style.format({"Confidence": "{:.2%}"}), use_container_width=True, hide_index=True)
 
-            csv = batch_df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download results (CSV)", data=csv, file_name="batch_results.csv", mime="text/csv")
+                csv = batch_df.to_csv(index=False).encode("utf-8")
+                st.download_button("Download results (CSV)", data=csv, file_name="batch_results.csv", mime="text/csv")
         except Exception as e:
             st.error(f"Batch prediction failed: {e}")
 
@@ -455,15 +487,19 @@ if uploaded_file and uploaded_file.size > 5_000_000:
         try:
             with st.spinner("Running batch inference for all models…"):
                 for f in files:
+                    if f.size > 5_000_000:
+                        st.warning(f"{f.name} is large (>5MB). Skipping.")
+                        continue
                     img = Image.open(f).convert("RGB")
 
-                    # CNN
-                    p_cnn = cnn_model.predict(preprocess_for_cnn(img))
-                    cls_cnn = int(np.argmax(p_cnn)); conf_cnn = float(p_cnn[0][cls_cnn])
-                    all_rows.append([
-                        f.name, "CNN", GENRE_LABELS[cls_cnn], conf_cnn,
-                        MODEL_METRICS["CNN"][metric_choice.lower()]
-                    ])
+                    # CNN (only if available)
+                    if cnn_model is not None:
+                        p_cnn = cnn_model.predict(preprocess_for_cnn(img))
+                        cls_cnn = int(np.argmax(p_cnn)); conf_cnn = float(p_cnn[0][cls_cnn])
+                        all_rows.append([
+                            f.name, "CNN", GENRE_LABELS[cls_cnn], conf_cnn,
+                            MODEL_METRICS["CNN"][metric_choice.lower()]
+                        ])
 
                     # HOG once
                     hog_feat = extract_hog_features(img)
@@ -484,49 +520,53 @@ if uploaded_file and uploaded_file.size > 5_000_000:
                         MODEL_METRICS["SVM"][metric_choice.lower()]
                     ])
 
-            compare_df = pd.DataFrame(
-                all_rows,
-                columns=["File", "Model", "Predicted Genre", "Confidence", f"Validation {metric_choice}"]
-            )
-
-            # Table of all file-model results
-            st.dataframe(
-                compare_df.style.format({"Confidence": "{:.2%}", f"Validation {metric_choice}": "{:.2%}"}),
-                hide_index=True, use_container_width=True
-            )
-
-            # Single bar chart of average confidence per model (across files)
-            st.subheader("📊 Average Confidence per Model (across uploaded files)")
-            avg_conf = (compare_df.groupby("Model", as_index=False)["Confidence"]
-                        .mean()
-                        .sort_values("Confidence", ascending=True))
-            avg_chart = (
-                alt.Chart(avg_conf)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Model:N"),
-                    y=alt.Y("Confidence:Q", axis=alt.Axis(format="%")),
-                    color=alt.Color("Model:N", legend=None),
-                    tooltip=[alt.Tooltip("Model:N"), alt.Tooltip("Confidence:Q", format=".2%")]
+            if all_rows:
+                compare_df = pd.DataFrame(
+                    all_rows,
+                    columns=["File", "Model", "Predicted Genre", "Confidence", f"Validation {metric_choice}"]
                 )
-            )
-            avg_labels = (
-                alt.Chart(avg_conf)
-                .mark_text(dy=-6)
-                .encode(
-                    x=alt.X("Model:N"),
-                    y=alt.Y("Confidence:Q"),
-                    text=alt.Text("Confidence:Q", format=".1%")
-                )
-            )
-            st.altair_chart(avg_chart + avg_labels, use_container_width=True)
 
-            # Download results
-            csv = compare_df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download results (CSV)", data=csv, file_name="batch_compare_results.csv", mime="text/csv")
+                # Table of all file-model results
+                st.dataframe(
+                    compare_df.style.format({"Confidence": "{:.2%}", f"Validation {metric_choice}": "{:.2%}"}),
+                    hide_index=True, use_container_width=True
+                )
+
+                # Single bar chart of average confidence per model (across files)
+                st.subheader("📊 Average Confidence per Model (across uploaded files)")
+                avg_conf = (compare_df.groupby("Model", as_index=False)["Confidence"]
+                            .mean()
+                            .sort_values("Confidence", ascending=True))
+                avg_chart = (
+                    alt.Chart(avg_conf)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Model:N"),
+                        y=alt.Y("Confidence:Q", axis=alt.Axis(format="%")),
+                        color=alt.Color("Model:N", legend=None),
+                        tooltip=[alt.Tooltip("Model:N"), alt.Tooltip("Confidence:Q", format=".2%")]
+                    )
+                )
+                avg_labels = (
+                    alt.Chart(avg_conf)
+                    .mark_text(dy=-6)
+                    .encode(
+                        x=alt.X("Model:N"),
+                        y=alt.Y("Confidence:Q"),
+                        text=alt.Text("Confidence:Q", format=".1%")
+                    )
+                )
+                st.altair_chart(avg_chart + avg_labels, use_container_width=True)
+
+                # Download results
+                csv = compare_df.to_csv(index=False).encode("utf-8")
+                st.download_button("Download results (CSV)", data=csv, file_name="batch_compare_results.csv", mime="text/csv")
 
         except Exception as e:
             st.error(f"Batch comparison failed: {e}")
+
+
+
 
 
 
